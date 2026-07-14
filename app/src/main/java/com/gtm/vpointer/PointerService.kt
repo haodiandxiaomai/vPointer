@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.Display
 import android.view.Gravity
@@ -69,6 +70,8 @@ class PointerService : Service() {
     private val tcpClients = mutableSetOf<OutputStream>()
     private lateinit var orientationEventListener: OrientationEventListener
     private var lastRotation = -1
+    // 按下状态方向上报节流：每个指针事件最高 250Hz，限制为 1Hz 避免冗余回发
+    private var lastDownOrientationSendMs = 0L
 
     private var targetDisplayId = Display.DEFAULT_DISPLAY
     private lateinit var displayManagerHelper: DisplayManagerHelper
@@ -458,7 +461,14 @@ class PointerService : Service() {
             renderer?.setPosition(abs_x, abs_y)
             if (downing_int == 1) {
                 renderer?.setScale(0.95f)
-                sendDeviceOrientation(getDeviceRotation())
+                // 按下时持续上报屏幕方向，但节流到 1Hz：指针事件最高 250Hz，
+                // 否则每秒会新建数百个 GlobalScope 协程向 Pico 回发冗余字节。
+                // 方向真正变化时还有 OrientationEventListener 兜底，不会漏发。
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastDownOrientationSendMs >= 1000) {
+                    lastDownOrientationSendMs = now
+                    sendDeviceOrientation(getDeviceRotation())
+                }
             } else {
                 renderer?.setScale(1.0f)
             }
@@ -637,7 +647,7 @@ class PointerService : Service() {
                     android.util.Log.e("PointerService", "Overlay addView failed", e)
                 }
             }
-            fade(imageView, 1f)
+            fade(imageView, 0.75f)
         }
 
         override fun hide() {
@@ -750,7 +760,7 @@ class PointerService : Service() {
             }
             imageView.scaleX = baseScale
             imageView.scaleY = baseScale
-            fade(imageView, 1f)
+            fade(imageView, 0.75f)
         }
 
         override fun hide() {

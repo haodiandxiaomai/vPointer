@@ -213,3 +213,6 @@ x,y,show,down,0\n
 外接显示器使用 `Presentation`（Dialog 子类）渲染光标。Dialog 的 DecorView 默认会消费触摸事件，即使设置了 `FLAG_NOT_TOUCHABLE`，在某些 ROM 上触摸仍会被拦截，导致外接屏上点击无响应。
 
 **解决方案**：光标窗口相对触摸坐标偏移 4px。偏移后触摸点落在光标窗口之外，直接穿透到下方应用，不影响触摸操作。视觉上 4px 的偏移几乎不可见。
+
+## DEBUG
+使用logcat查看日志：adb logcat | grep -i "vpointer\|PointerService\|MainActivity"
