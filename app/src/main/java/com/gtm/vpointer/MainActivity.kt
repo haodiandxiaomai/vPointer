@@ -18,7 +18,9 @@ import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import com.gtm.vpointer.ui.screen.DisplaySelectScreen
 import com.gtm.vpointer.ui.screen.ForwardStatus
@@ -164,7 +166,7 @@ class MainActivity : ComponentActivity() {
                                     selectedDisplayId = displayId
                                 },
                                 onStartService = {
-                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this@MainActivity)) {
                                         val intent = Intent(
                                             Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                                             Uri.parse("package:$packageName")
@@ -175,7 +177,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 onStopService = {
-                                    stopService(Intent(this, PointerService::class.java))
+                                    stopService(Intent(this@MainActivity, PointerService::class.java))
                                 }
                             )
                             else -> PortForwardScreen(
