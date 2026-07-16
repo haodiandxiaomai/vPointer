@@ -250,11 +250,16 @@ class PortForwarder(
         var name: String? = null
 
         if (cm != null) {
-            for (n in cm.allNetworks) {
-                val iface = runCatching { cm.getLinkProperties(n)?.interfaceName }.getOrNull()
-                if (iface != null && iface.startsWith("usb", ignoreCase = true)) {
-                    foundNet = n; name = iface; break
+            try {
+                for (n in cm.allNetworks) {
+                    val iface = runCatching { cm.getLinkProperties(n)?.interfaceName }.getOrNull()
+                    if (iface != null && iface.startsWith("usb", ignoreCase = true)) {
+                        foundNet = n; name = iface; break
+                    }
                 }
+            } catch (e: SecurityException) {
+                // 缺 ACCESS_NETWORK_STATE 时跳过 ConnectivityManager，回退到 NetworkInterface 枚举
+                Log.w(TAG, "ConnectivityManager access denied (ACCESS_NETWORK_STATE?): ${e.message}")
             }
         }
         if (name == null) {
