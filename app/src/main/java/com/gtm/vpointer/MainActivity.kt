@@ -10,9 +10,19 @@ import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.runtime.*
+import androidx.core.content.ContextCompat
 import com.gtm.vpointer.ui.screen.DisplaySelectScreen
+import com.gtm.vpointer.ui.screen.ForwardStatus
+import com.gtm.vpointer.ui.screen.PortForwardScreen
 import com.gtm.vpointer.ui.screen.ServiceState
 
 class MainActivity : ComponentActivity() {
@@ -22,6 +32,13 @@ class MainActivity : ComponentActivity() {
     private var selectedDisplayId by mutableStateOf<Int?>(null)
     private var serviceState by mutableStateOf(ServiceState.IDLE)
     private var serviceMessage by mutableStateOf("")
+
+    // 端口转发相关状态
+    private var mainPage by mutableStateOf(0)
+    private var forwardListenPort by mutableStateOf("8000")
+    private var forwardRunning by mutableStateOf(false)
+    private var forwardStatusText by mutableStateOf("")
+    private var forwardStatusLevel by mutableStateOf(ForwardStatus.INFO)
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -38,6 +55,37 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private val forwardReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val status = intent.getStringExtra(PortForwardService.EXTRA_STATUS) ?: return
+            val message = intent.getStringExtra(PortForwardService.EXTRA_MESSAGE) ?: ""
+            android.util.Log.d("MainActivity", "Forward status: $status - $message")
+            when (status) {
+                PortForwardService.STATUS_STARTED,
+                PortForwardService.STATUS_USB_UP -> {
+                    forwardRunning = true
+                    forwardStatusText = message
+                    forwardStatusLevel = ForwardStatus.OK
+                }
+                PortForwardService.STATUS_USB_DOWN -> {
+                    forwardRunning = true
+                    forwardStatusText = message
+                    forwardStatusLevel = ForwardStatus.WARN
+                }
+                PortForwardService.STATUS_ERROR -> {
+                    forwardRunning = false
+                    forwardStatusText = message
+                    forwardStatusLevel = ForwardStatus.ERROR
+                }
+                PortForwardService.STATUS_STOPPED -> {
+                    forwardRunning = false
+                    forwardStatusText = message
+                    forwardStatusLevel = ForwardStatus.INFO
+                }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -48,6 +96,9 @@ class MainActivity : ComponentActivity() {
                 serviceState = ServiceState.valueOf(savedState)
                 serviceMessage = savedInstanceState.getString("serviceMessage", "")
             }
+            mainPage = savedInstanceState.getInt("mainPage", 0)
+            forwardListenPort = savedInstanceState.getString("forwardListenPort", "8000")
+            forwardRunning = savedInstanceState.getBoolean("forwardRunning", false)
         }
 
         displayManagerHelper = DisplayManagerHelper(this)
@@ -75,31 +126,74 @@ class MainActivity : ComponentActivity() {
             registerReceiver(statusReceiver, filter)
         }
 
+        // 注册端口转发状态广播
+        val forwardFilter = IntentFilter(PortForwardService.ACTION_FORWARD_STATUS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(forwardReceiver, forwardFilter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(forwardReceiver, forwardFilter)
+        }
+
         setContent {
             MaterialTheme {
-                DisplaySelectScreen(
-                    displays = displays,
-                    selectedDisplayId = selectedDisplayId,
-                    serviceState = serviceState,
-                    serviceMessage = serviceMessage,
-                    onDisplaySelected = { displayId ->
-                        selectedDisplayId = displayId
-                    },
-                    onStartService = {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-                            val intent = Intent(
-                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                Uri.parse("package:$packageName")
-                            )
-                            startActivityForResult(intent, OVERLAY_PERMISSION_REQUEST_CODE)
-                        } else {
-                            startPointerService()
-                        }
-                    },
-                    onStopService = {
-                        stopService(Intent(this, PointerService::class.java))
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .systemBarsPadding()
+                ) {
+                    TabRow(selectedTabIndex = mainPage) {
+                        Tab(
+                            selected = mainPage == 0,
+                            onClick = { mainPage = 0 },
+                            text = { Text("虚拟光标") }
+                        )
+                        Tab(
+                            selected = mainPage == 1,
+                            onClick = { mainPage = 1 },
+                            text = { Text("端口转发") }
+                        )
                     }
-                )
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        when (mainPage) {
+                            0 -> DisplaySelectScreen(
+                                displays = displays,
+                                selectedDisplayId = selectedDisplayId,
+                                serviceState = serviceState,
+                                serviceMessage = serviceMessage,
+                                onDisplaySelected = { displayId ->
+                                    selectedDisplayId = displayId
+                                },
+                                onStartService = {
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+                                        val intent = Intent(
+                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                            Uri.parse("package:$packageName")
+                                        )
+                                        startActivityForResult(intent, OVERLAY_PERMISSION_REQUEST_CODE)
+                                    } else {
+                                        startPointerService()
+                                    }
+                                },
+                                onStopService = {
+                                    stopService(Intent(this, PointerService::class.java))
+                                }
+                            )
+                            else -> PortForwardScreen(
+                                listenPort = forwardListenPort,
+                                onPortChange = { v ->
+                                    if (v.all { it.isDigit() } && v.length <= 5) {
+                                        forwardListenPort = v
+                                    }
+                                },
+                                running = forwardRunning,
+                                statusText = forwardStatusText,
+                                statusLevel = forwardStatusLevel,
+                                onStart = { startForward() },
+                                onStop = { stopForward() }
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -127,15 +221,37 @@ class MainActivity : ComponentActivity() {
         startService(serviceIntent)
     }
 
+    private fun startForward() {
+        val port = forwardListenPort.toIntOrNull() ?: return
+        if (port !in 1024..65535) {
+            forwardStatusText = "端口需在 1024~65535 之间"
+            forwardStatusLevel = ForwardStatus.ERROR
+            return
+        }
+        forwardStatusText = ""
+        val intent = Intent(this, PortForwardService::class.java).apply {
+            putExtra(PortForwardService.EXTRA_PORT, port)
+        }
+        ContextCompat.startForegroundService(this, intent)
+    }
+
+    private fun stopForward() {
+        stopService(Intent(this, PortForwardService::class.java))
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putString("serviceState", serviceState.name)
         outState.putString("serviceMessage", serviceMessage)
+        outState.putInt("mainPage", mainPage)
+        outState.putString("forwardListenPort", forwardListenPort)
+        outState.putBoolean("forwardRunning", forwardRunning)
     }
 
     override fun onDestroy() {
         super.onDestroy()
         try { unregisterReceiver(statusReceiver) } catch (_: Exception) {}
+        try { unregisterReceiver(forwardReceiver) } catch (_: Exception) {}
         displayManagerHelper.unregisterDisplayListener()
     }
 

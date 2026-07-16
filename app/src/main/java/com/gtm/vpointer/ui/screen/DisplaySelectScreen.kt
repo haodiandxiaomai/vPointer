@@ -32,7 +32,6 @@ fun DisplaySelectScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .systemBarsPadding()
             .padding(16.dp)
     ) {
         Text(
