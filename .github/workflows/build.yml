@@ -26,50 +26,56 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
         
-    - name: Restore Android Keystore
-      run: |
-        echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > app/release-key.jks
-        
-    - name: Build Signed APK
+    # ========== 注意：这里删除了 Restore Android Keystore 步骤 ==========
+    # ========== 因为 Debug 版本不需要签名 ==========
+
+    - name: Build Debug APK (no signing)
       run: |
         docker run --rm \
           -v $PWD:/application \
-          -e KEYSTORE_PASSWORD="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
-          -e KEY_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}" \
-          -e KEY_PASSWORD="${{ secrets.ANDROID_KEY_PASSWORD }}" \
           riderlty/vpoint-builder \
-          gradle assembleRelease
+          gradle assembleDebug
           
     - name: Get current date
       id: date
       run: echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
-      
+
     - name: Rename APK file
       run: |
-        cd app/build/outputs/apk/release
-        for file in *.apk; do
-          if [[ "$file" == *"release"* ]]; then
-            new_name="vPoint.${{ steps.date.outputs.date }}.apk"
-            cp "$file" "/home/runner/work/vPointer/vPointer/app/$new_name"
-            echo "new_apk_path=/home/runner/work/vPointer/vPointer/app/$new_name" >> $GITHUB_ENV
-            echo "APK renamed to: $new_name"
-            break
-          fi
-        done
+        # Debug APK 生成在 app/build/outputs/apk/debug/ 目录下
+        cd app/build/outputs/apk/debug
+        if [ -f "app-debug.apk" ]; then
+          new_name="vPoint-debug.${{ steps.date.outputs.date }}.apk"
+          cp "app-debug.apk" "/home/runner/work/vPointer/vPointer/app/$new_name"
+          echo "new_apk_path=/home/runner/work/vPointer/vPointer/app/$new_name" >> $GITHUB_ENV
+          echo "APK renamed to: $new_name"
+        else
+          echo "Error: app-debug.apk not found!"
+          exit 1
+        fi
+
+    - name: Determine Tag Name
+      id: tag
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "tag=${{ github.event.inputs.release_version }}" >> $GITHUB_OUTPUT
+        else
+          echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+        fi
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: ${{ github.ref_name }} 
-        name: "vPoint Release ${{ steps.date.outputs.date }}"
+        tag_name: ${{ steps.tag.outputs.tag }}
+        name: "vPoint ${{ steps.tag.outputs.tag }} (Debug)"
         body: |
-          Automatic release of vPoint APK
-          
-          - Build date: ${{ steps.date.outputs.date }}
-          - Tag: ${{ github.ref_name }}
-          - Commit: ${{ github.sha }}
+          📱 **Debug 版本**（未签名，仅用于测试）
+          - 构建日期：${{ steps.date.outputs.date }}
+          - 提交哈希：${{ github.sha }}
+          - 触发方式：${{ github.event_name }}
+          - ⚠️ 此 APK 使用调试签名，**不可**用于发布到应用商店。
         draft: false
-        prerelease: false
+        prerelease: true   # 标记为预发布，方便区分
         files: ${{ env.new_apk_path }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
