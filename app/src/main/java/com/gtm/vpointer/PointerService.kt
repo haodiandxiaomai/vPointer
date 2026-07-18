@@ -51,7 +51,15 @@ class PointerService : Service() {
         private const val TCP_STATE_HEADER = 1    // 已收到 0x55，等待 0xAA
         private const val TCP_STATE_BODY = 2      // header 完成，读取 9 字节 body
     }
-
+	// 在 PointerService 类中，companion object 外部添加
+	private val AUTO_HIDE_DELAY_MS = 5000L // 5秒无活动则隐藏
+	private val mainHandler = Handler(Looper.getMainLooper())
+	private val autoHideRunnable = Runnable {
+		if (isShow) {
+			Log.d("PointerService", "Auto-hide triggered (inactivity)")
+			removePointer() // 内部会设置 isShow = false
+		}
+	}
     // 抽象出渲染器：内置屏用 WindowManager 覆盖层，外接屏用 Presentation
     private var renderer: PointerRenderer? = null
 
@@ -452,32 +460,40 @@ class PointerService : Service() {
         }
     }
 
-    private fun handlePointer(abs_x: Int, abs_y: Int, show_int: Int, downing_int: Int) {
-        android.util.Log.d("PointerService", "handlePointer x=$abs_x y=$abs_y show=$show_int down=$downing_int renderer=${renderer?.javaClass?.simpleName}")
-        if (show_int == 1) {
-            if (!isShow) {
-                showPointer()
-            }
-            renderer?.setPosition(abs_x, abs_y)
-            if (downing_int == 1) {
-                renderer?.setScale(0.95f)
-                // 按下时持续上报屏幕方向，但节流到 1Hz：指针事件最高 250Hz，
-                // 否则每秒会新建数百个 GlobalScope 协程向 Pico 回发冗余字节。
-                // 方向真正变化时还有 OrientationEventListener 兜底，不会漏发。
-                val now = SystemClock.elapsedRealtime()
-                if (now - lastDownOrientationSendMs >= 1000) {
-                    lastDownOrientationSendMs = now
-                    sendDeviceOrientation(getDeviceRotation())
-                }
-            } else {
-                renderer?.setScale(1.0f)
-            }
-        } else {
-            if (isShow) {
-                removePointer()
-            }
-        }
-    }
+	private fun handlePointer(abs_x: Int, abs_y: Int, show_int: Int, downing_int: Int) {
+		Log.d("PointerService", "handlePointer x=$abs_x y=$abs_y show=$show_int down=$downing_int renderer=${renderer?.javaClass?.simpleName}")
+
+		if (show_int == 1) {
+			// 显示或保持显示
+			if (!isShow) {
+				showPointer() // 内部设置 isShow = true
+			}
+			renderer?.setPosition(abs_x, abs_y)
+			if (downing_int == 1) {
+				renderer?.setScale(0.95f)
+				// 方向上报节流...
+				val now = SystemClock.elapsedRealtime()
+				if (now - lastDownOrientationSendMs >= 1000) {
+					lastDownOrientationSendMs = now
+					sendDeviceOrientation(getDeviceRotation())
+				}
+			} else {
+				renderer?.setScale(1.0f)
+			}
+
+			// ===== 新增：重置自动隐藏计时器 =====
+			mainHandler.removeCallbacks(autoHideRunnable)
+			mainHandler.postDelayed(autoHideRunnable, AUTO_HIDE_DELAY_MS)
+
+		} else {
+			// show_int == 0
+			if (isShow) {
+				removePointer()
+			}
+			// 外部主动隐藏，取消计时器
+			mainHandler.removeCallbacks(autoHideRunnable)
+		}
+	}
 
     private fun showPointer() {
         renderer?.show()
@@ -566,6 +582,7 @@ class PointerService : Service() {
             val displayManager = getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
             displayManager.unregisterDisplayListener(it)
         }
+		mainHandler.removeCallbacks(autoHideRunnable)
         sendStatusBroadcast(STATUS_STOPPED, "服务已停止")
     }
 
