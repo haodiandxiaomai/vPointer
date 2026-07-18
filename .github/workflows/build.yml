@@ -1,6 +1,7 @@
 name: Build and Release APK
 
 on:
+  workflow_dispatch:          # 👈 加上这行
   push:
     tags:
       - 'v*' 
