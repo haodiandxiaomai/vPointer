@@ -35,7 +35,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-
+import android.util.Log
 class PointerService : Service() {
 
     companion object {
